@@ -17,7 +17,7 @@
 
 - 段階開発: RustでL0実装→拡張→最適化（PoCからRust一本化）
 - 設計: ECS＋スケジューラ、純粋関数＋副作用分離、CIテスト自動化
-- 運用: GitHub管理、MITライセンス
+- 運用: GitHub管理、ライセンスは検討中
 
 ## 3. 技術
 
@@ -31,15 +31,14 @@
 
 入力:
 
-- ブロックの初期配置や初期状態
-- プレイヤー操作
+- ブロックの配置や状態
 - 最大ステップ数の指定
-- **統合版/Java版の指定とバージョン番号**
+- 統合版/Java版の指定とバージョン番号
 
 出力:
 
-- ブロックの最終配置や最終状態
-- 装置動作過程の状態変更履歴＋統計
+- 装置動作過程の状態変更履歴
+- 統計
 
 ### 入力例
 
@@ -49,21 +48,16 @@
     "edition": "java",      // "java" または "bedrock"
     "version": "1.21"       // 例: "1.21", "1.20.15"
   },
+  "ticks": 5,
+  "early_exit": true,
   "world": {
-    "size": [50, 10, 50],
     "blocks": [
-      { "pos": [0,0,-1], "id": "redstone_lamp" },
-      { "pos": [0,0,0],  "id": "redstone_dust", "meta": { "strength": 0 } },
-      { "pos": [0,0,1],  "id": "lever", "meta": { "facing": "north", "powered": false } }
+      { "pos": [0,0,-1], "tick_at": 0, "id": "redstone_lamp" },
+      { "pos": [0,0,0],  "tick_at": 0, "id": "redstone_dust", "meta": { "strength": 0 } },
+      { "pos": [0,0,1],  "tick_at": 0, "id": "lever", "meta": { "facing": "north", "powered": false } }
+      { "pos": [0,0,1],  "tick_at": 2, "id": "lever", "meta": { "facing": "north", "powered": true } }    // 2tick目にレバーをオンにするユーザー操作に対応したdiff
     ]
   },
-  "request": {
-    "ticks": 5,
-    "actions": [
-      { "type": "toggle", "pos": [0,0,1], "tick": 0 }
-    ],
-    "stop_when_stable": false
-  }
 }
 ```
 
@@ -71,20 +65,17 @@
 
 ```json
 {
-  "final_world": {
-    "blocks": [
-      { "pos": [0,0,-1], "id": "redstone_lamp", "meta": { "lit": true } },
-      { "pos": [0,0,0],  "id": "redstone_dust", "meta": { "strength": 15 } },
-      { "pos": [0,0,1],  "id": "lever", "meta": { "powered": true } }
-    ]
-  },
-  "events": [
-    { "tick": 1, "pos": [0,0,0], "type": "dust_strength", "value": 15 },
-    { "tick": 1, "pos": [0,0,-1], "type": "lamp_lit", "value": true }
+  "diffs": [
+    {
+      "tick": 1,
+      "changes": [
+        { "x": 0, "y": 0, "z": 0,  "type": "dust", "power": 15 },
+        { "x": 0, "y": 0, "z": -1, "type": "lamp", "on": true }
+      ]
+    }
   ],
   "stats": {
     "ticks_simulated": 2,
-    "blocks_updated": 3,
     "elapsed_ms": 0.42
   }
 }
