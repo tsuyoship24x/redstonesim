@@ -16,7 +16,7 @@
 // =================================================
 
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 // -------------------------------------------------
 // Position
@@ -179,7 +179,9 @@ pub fn simulate(request: SimRequest) -> SimResponse {
             m
         };
 
-        let mut outputs = gather_outputs(&world);
+        // take a snapshot of the world so we can query neighbor states
+        let snapshot = world.clone();
+        let outputs = gather_outputs(&snapshot);
 
         // update blocks based on neighbor power
         for (pos, block) in world.iter_mut() {
@@ -238,7 +240,7 @@ pub fn simulate(request: SimRequest) -> SimResponse {
                     for (dx, dy, dz) in DIRS {
                         let n = Pos { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz };
                         if let Some(pw) = outputs.get(&n) {
-                            let candidate = match world.get(&n) {
+                            let candidate = match snapshot.get(&n) {
                                 Some(BlockKind::Dust { power: p }) => p.saturating_sub(1),
                                 _ => *pw,
                             };
