@@ -51,6 +51,18 @@ pub enum BlockKind {
         ticks_remaining: u8, // countdown until output
         powered: bool,       // current output state
     },
+    Comparator {
+        output: u8, // current output power
+    },
+    Torch {
+        lit: bool,
+    },
+    Piston {
+        extended: bool,
+    },
+    Hopper {
+        enabled: bool,
+    },
 }
 
 // -------------------------------------------------
@@ -138,82 +150,173 @@ pub fn simulate(request: SimRequest) -> SimResponse {
     for tick in 1..=request.ticks {
         let mut changes: Vec<BlockChange> = Vec::new();
 
-        // 1️⃣ update internal timers
+        // gather current outputs (power level per position)
+        let gather_outputs = |world: &HashMap<Pos, BlockKind>| -> HashMap<Pos, u8> {
+            let mut m = HashMap::new();
+            for (p, b) in world {
+                match b {
+                    BlockKind::Lever { on: true } => {
+                        m.insert(*p, 15);
+                    }
+                    BlockKind::Button { ticks_remaining } if *ticks_remaining > 0 => {
+                        m.insert(*p, 15);
+                    }
+                    BlockKind::Repeater { powered: true, .. } => {
+                        m.insert(*p, 15);
+                    }
+                    BlockKind::Comparator { output } if *output > 0 => {
+                        m.insert(*p, *output);
+                    }
+                    BlockKind::Torch { lit: true } => {
+                        m.insert(*p, 15);
+                    }
+                    BlockKind::Dust { power } if *power > 0 => {
+                        m.insert(*p, *power);
+                    }
+                    _ => {}
+                }
+            }
+            m
+        };
+
+        let mut outputs = gather_outputs(&world);
+
+        // update blocks based on neighbor power
         for (pos, block) in world.iter_mut() {
             match block {
                 BlockKind::Button { ticks_remaining } => {
                     if *ticks_remaining > 0 {
                         *ticks_remaining -= 1;
-                        changes.push(BlockChange {
-                            pos: *pos,
-                            kind: block.clone(),
-                        });
+                        changes.push(BlockChange { pos: *pos, kind: block.clone() });
                     }
                 }
-                BlockKind::Repeater {
-                    delay: _,
-                    ticks_remaining,
-                    powered,
-                } => {
+                BlockKind::Repeater { delay, ticks_remaining, powered } => {
+                    // input power from neighbors
+                    let mut input = 0;
+                    for (dx, dy, dz) in DIRS {
+                        let n = Pos { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz };
+                        if let Some(pw) = outputs.get(&n) {
+                            if n != *pos {
+                                input = input.max(*pw);
+                            }
+                        }
+                    }
+
+                    if input > 0 {
+                        if !*powered && *ticks_remaining == 0 {
+                            *ticks_remaining = *delay;
+                        }
+                    } else {
+                        *powered = false;
+                        *ticks_remaining = 0;
+                    }
+
                     if *ticks_remaining > 0 {
                         *ticks_remaining -= 1;
-                        if *ticks_remaining == 0 {
-                            *powered = true; // output now powered
+                        if *ticks_remaining == 0 && input > 0 {
+                            *powered = true;
                         }
-                        changes.push(BlockChange {
-                            pos: *pos,
-                            kind: block.clone(),
-                        });
+                    }
+
+                    changes.push(BlockChange { pos: *pos, kind: block.clone() });
+                }
+                BlockKind::Comparator { output } => {
+                    let mut new_out = 0;
+                    for (dx, dy, dz) in DIRS {
+                        let n = Pos { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz };
+                        if let Some(pw) = outputs.get(&n) {
+                            new_out = new_out.max(*pw);
+                        }
+                    }
+                    if *output != new_out {
+                        *output = new_out;
+                        changes.push(BlockChange { pos: *pos, kind: block.clone() });
+                    }
+                }
+                BlockKind::Dust { power } => {
+                    let mut new_power = 0;
+                    for (dx, dy, dz) in DIRS {
+                        let n = Pos { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz };
+                        if let Some(pw) = outputs.get(&n) {
+                            let candidate = match world.get(&n) {
+                                Some(BlockKind::Dust { power: p }) => p.saturating_sub(1),
+                                _ => *pw,
+                            };
+                            new_power = new_power.max(candidate);
+                        }
+                    }
+                    if *power != new_power {
+                        *power = new_power;
+                        changes.push(BlockChange { pos: *pos, kind: block.clone() });
+                    }
+                }
+                BlockKind::Lamp { on } => {
+                    let mut powered = false;
+                    for (dx, dy, dz) in DIRS {
+                        let n = Pos { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz };
+                        if let Some(pw) = outputs.get(&n) {
+                            if *pw > 0 {
+                                powered = true;
+                                break;
+                            }
+                        }
+                    }
+                    if *on != powered {
+                        *on = powered;
+                        changes.push(BlockChange { pos: *pos, kind: block.clone() });
+                    }
+                }
+                BlockKind::Torch { lit } => {
+                    let mut powered = false;
+                    for (dx, dy, dz) in DIRS {
+                        let n = Pos { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz };
+                        if let Some(pw) = outputs.get(&n) {
+                            if *pw > 0 {
+                                powered = true;
+                                break;
+                            }
+                        }
+                    }
+                    let new_lit = !powered;
+                    if *lit != new_lit {
+                        *lit = new_lit;
+                        changes.push(BlockChange { pos: *pos, kind: block.clone() });
+                    }
+                }
+                BlockKind::Piston { extended } => {
+                    let mut powered = false;
+                    for (dx, dy, dz) in DIRS {
+                        let n = Pos { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz };
+                        if let Some(pw) = outputs.get(&n) {
+                            if *pw > 0 {
+                                powered = true;
+                                break;
+                            }
+                        }
+                    }
+                    if *extended != powered {
+                        *extended = powered;
+                        changes.push(BlockChange { pos: *pos, kind: block.clone() });
+                    }
+                }
+                BlockKind::Hopper { enabled } => {
+                    let mut powered = false;
+                    for (dx, dy, dz) in DIRS {
+                        let n = Pos { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz };
+                        if let Some(pw) = outputs.get(&n) {
+                            if *pw > 0 {
+                                powered = true;
+                                break;
+                            }
+                        }
+                    }
+                    let new_enabled = !powered;
+                    if *enabled != new_enabled {
+                        *enabled = new_enabled;
+                        changes.push(BlockChange { pos: *pos, kind: block.clone() });
                     }
                 }
                 _ => {}
-            }
-        }
-
-        // 2️⃣ gather currently powered outputs
-        let mut powered_positions: HashSet<Pos> = HashSet::new();
-        for (pos, block) in &world {
-            match block {
-                BlockKind::Lever { on: true } => {
-                    powered_positions.insert(*pos);
-                }
-                BlockKind::Button { ticks_remaining } if *ticks_remaining > 0 => {
-                    powered_positions.insert(*pos);
-                }
-                BlockKind::Repeater { powered: true, .. } => {
-                    powered_positions.insert(*pos);
-                }
-                _ => {}
-            }
-        }
-
-        // 3️⃣ propagate power to adjacent dust & lamp
-        for src in powered_positions.iter() {
-            for (dx, dy, dz) in DIRS {
-                let p = Pos {
-                    x: src.x + dx,
-                    y: src.y + dy,
-                    z: src.z + dz,
-                };
-                if let Some(block) = world.get_mut(&p) {
-                    match block {
-                        BlockKind::Dust { power } if *power == 0 => {
-                            *power = 15;
-                            changes.push(BlockChange {
-                                pos: p,
-                                kind: block.clone(),
-                            });
-                        }
-                        BlockKind::Lamp { on } if !*on => {
-                            *on = true;
-                            changes.push(BlockChange {
-                                pos: p,
-                                kind: block.clone(),
-                            });
-                        }
-                        _ => {}
-                    }
-                }
             }
         }
 
@@ -281,6 +384,48 @@ mod tests {
             && d.changes
                 .iter()
                 .any(|c| matches!(c.kind, BlockKind::Lamp { on: true }))));
+    }
+
+    #[test]
+    fn dust_attenuation() {
+        let world = World {
+            blocks: vec![
+                PlacedBlock {
+                    pos: Pos { x: 0, y: 0, z: 0 },
+                    kind: BlockKind::Lever { on: true },
+                },
+                PlacedBlock {
+                    pos: Pos { x: 1, y: 0, z: 0 },
+                    kind: BlockKind::Dust { power: 0 },
+                },
+                PlacedBlock {
+                    pos: Pos { x: 2, y: 0, z: 0 },
+                    kind: BlockKind::Dust { power: 0 },
+                },
+            ],
+        };
+        let req = SimRequest { ticks: 3, world, early_exit: true };
+        let res = simulate(req);
+        assert!(res.diffs.iter().any(|d| d.changes.iter().any(|c| matches!(c.kind, BlockKind::Dust { power: 14 }))));
+    }
+
+    #[test]
+    fn torch_turns_off_when_powered() {
+        let world = World {
+            blocks: vec![
+                PlacedBlock {
+                    pos: Pos { x: 0, y: 0, z: 0 },
+                    kind: BlockKind::Lever { on: true },
+                },
+                PlacedBlock {
+                    pos: Pos { x: 1, y: 0, z: 0 },
+                    kind: BlockKind::Torch { lit: true },
+                },
+            ],
+        };
+        let req = SimRequest { ticks: 2, world, early_exit: true };
+        let res = simulate(req);
+        assert!(res.diffs.iter().any(|d| d.changes.iter().any(|c| matches!(c.kind, BlockKind::Torch { lit: false }))));
     }
 }
 
