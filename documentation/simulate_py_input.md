@@ -53,3 +53,17 @@ print(result)
 
 `simulate_py` は結果も JSON 文字列として返します。`serde_json` などを用いて `SimResponse` として解釈できます。
 
+## ブロックの接続点を取得する
+`block_connections_py` 関数に `PlacedBlock` を表す JSON を渡すと、そのブロックが
+どの位置から入力を受け取り、どこへ出力するかを問い合わせられます。
+
+```python
+import redstonesim
+
+block_json = '{"x":0,"y":0,"z":0,"type":"dust","power":0}'
+info = redstonesim.block_connections_py(block_json)
+print(info)  # => {"inputs": [...], "outputs": [...]}
+```
+
+結果も JSON 文字列で、`inputs` と `outputs` の配列に各座標が含まれます。
+
