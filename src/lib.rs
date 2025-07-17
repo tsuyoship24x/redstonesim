@@ -299,6 +299,7 @@ pub fn simulate(request: SimRequest) -> SimResponse {
             if let Some(block) = world.get_mut(pos) {
                 let mut changed = false;
                 let mut mark_out = false;
+                let input_positions = block.input_positions(*pos);
                 match block {
                     BlockKind::Button { ticks_remaining, .. } => {
                         if *ticks_remaining > 0 {
@@ -357,9 +358,9 @@ pub fn simulate(request: SimRequest) -> SimResponse {
                     }
                     BlockKind::Comparator { output, .. } => {
                         let mut new_out = 0;
-                        for n in block.input_positions(*pos) {
-                            if let Some(nb) = snapshot.get(&n) {
-                                let dir = dir_from_to(n, *pos);
+                        for n in &input_positions {
+                            if let Some(nb) = snapshot.get(n) {
+                                let dir = dir_from_to(*n, *pos);
                                 new_out = new_out.max(output_towards(nb, dir));
                             }
                         }
@@ -371,9 +372,9 @@ pub fn simulate(request: SimRequest) -> SimResponse {
                     }
                     BlockKind::Dust { power } => {
                         let mut new_power = 0;
-                        for n in block.input_positions(*pos) {
-                            if let Some(nb) = snapshot.get(&n) {
-                                let dir = dir_from_to(n, *pos);
+                        for n in &input_positions {
+                            if let Some(nb) = snapshot.get(n) {
+                                let dir = dir_from_to(*n, *pos);
                                 let pw = output_towards(nb, dir);
                                 let candidate = match nb {
                                     BlockKind::Dust { power: p, .. } => p.saturating_sub(1),
@@ -390,9 +391,9 @@ pub fn simulate(request: SimRequest) -> SimResponse {
                     }
                     BlockKind::Lamp { on } => {
                         let mut powered = false;
-                        for n in block.input_positions(*pos) {
-                            if let Some(nb) = snapshot.get(&n) {
-                                let dir = dir_from_to(n, *pos);
+                        for n in &input_positions {
+                            if let Some(nb) = snapshot.get(n) {
+                                let dir = dir_from_to(*n, *pos);
                                 if output_towards(nb, dir) > 0 {
                                     powered = true;
                                     break;
@@ -422,9 +423,9 @@ pub fn simulate(request: SimRequest) -> SimResponse {
                     }
                     BlockKind::Piston { extended, .. } => {
                         let mut powered = false;
-                        for n in block.input_positions(*pos) {
-                            if let Some(nb) = snapshot.get(&n) {
-                                let dir = dir_from_to(n, *pos);
+                        for n in &input_positions {
+                            if let Some(nb) = snapshot.get(n) {
+                                let dir = dir_from_to(*n, *pos);
                                 if output_towards(nb, dir) > 0 {
                                     powered = true;
                                     break;
@@ -439,9 +440,9 @@ pub fn simulate(request: SimRequest) -> SimResponse {
                     }
                     BlockKind::Hopper { enabled, .. } => {
                         let mut powered = false;
-                        for n in block.input_positions(*pos) {
-                            if let Some(nb) = snapshot.get(&n) {
-                                let dir = dir_from_to(n, *pos);
+                        for n in &input_positions {
+                            if let Some(nb) = snapshot.get(n) {
+                                let dir = dir_from_to(*n, *pos);
                                 if output_towards(nb, dir) > 0 {
                                     powered = true;
                                     break;
