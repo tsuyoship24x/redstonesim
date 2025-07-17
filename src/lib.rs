@@ -74,6 +74,23 @@ impl Direction {
     }
 }
 
+/// Calculate the `Direction` from one block to an adjacent block.
+fn dir_from_to(from: Pos, to: Pos) -> Direction {
+    for d in Direction::all() {
+        let (dx, dy, dz) = d.offset();
+        if from.x + dx == to.x && from.y + dy == to.y && from.z + dz == to.z {
+            return d;
+        }
+    }
+    panic!("positions are not adjacent: {:?} -> {:?}", from, to);
+}
+
+/// Trait for blocks that know where they accept input from and send output to.
+pub trait Connectable {
+    fn input_positions(&self, pos: Pos) -> Vec<Pos>;
+    fn output_positions(&self, pos: Pos) -> Vec<Pos>;
+}
+
 // -------------------------------------------------
 // Block kinds & internal state
 // -------------------------------------------------
@@ -116,6 +133,67 @@ pub enum BlockKind {
         enabled: bool,
         facing: Direction,
     },
+}
+
+impl Connectable for BlockKind {
+    fn input_positions(&self, pos: Pos) -> Vec<Pos> {
+        match self {
+            BlockKind::Lever { .. } | BlockKind::Button { .. } => Vec::new(),
+            BlockKind::Dust { .. }
+            | BlockKind::Lamp { .. }
+            | BlockKind::Piston { .. }
+            | BlockKind::Hopper { .. }
+            | BlockKind::Comparator { .. } => Direction::all()
+                .iter()
+                .map(|d| {
+                    let (dx, dy, dz) = d.offset();
+                    Pos { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz }
+                })
+                .collect(),
+            BlockKind::Repeater { facing, .. } => {
+                let back = facing.opposite();
+                let (dx, dy, dz) = back.offset();
+                vec![Pos { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz }]
+            }
+            BlockKind::Torch { facing, .. } => {
+                let (dx, dy, dz) = facing.offset();
+                vec![Pos { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz }]
+            }
+        }
+    }
+
+    fn output_positions(&self, pos: Pos) -> Vec<Pos> {
+        match self {
+            BlockKind::Lever { facing, .. }
+            | BlockKind::Button { facing, .. }
+            | BlockKind::Repeater { facing, .. }
+            | BlockKind::Comparator { facing, .. } => {
+                let (dx, dy, dz) = facing.offset();
+                vec![Pos { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz }]
+            }
+            BlockKind::Torch { facing, .. } => Direction::all()
+                .iter()
+                .filter_map(|d| {
+                    if *d == *facing {
+                        None
+                    } else {
+                        let (dx, dy, dz) = d.offset();
+                        Some(Pos { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz })
+                    }
+                })
+                .collect(),
+            BlockKind::Dust { .. } => Direction::all()
+                .iter()
+                .map(|d| {
+                    let (dx, dy, dz) = d.offset();
+                    Pos { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz }
+                })
+                .collect(),
+            BlockKind::Lamp { .. }
+            | BlockKind::Piston { .. }
+            | BlockKind::Hopper { .. } => Vec::new(),
+        }
+    }
 }
 
 // -------------------------------------------------
@@ -247,13 +325,12 @@ pub fn simulate(request: SimRequest) -> SimResponse {
 
                     changes.push(BlockChange { pos: *pos, kind: block.clone() });
                 }
-                BlockKind::Comparator { output, facing } => {
+                BlockKind::Comparator { output, .. } => {
                     let mut new_out = 0;
-                    for dir in Direction::all() {
-                        let (dx, dy, dz) = dir.offset();
-                        let n = Pos { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz };
+                    for n in block.input_positions(*pos) {
                         if let Some(nb) = snapshot.get(&n) {
-                            new_out = new_out.max(output_towards(nb, dir.opposite()));
+                            let dir = dir_from_to(n, *pos);
+                            new_out = new_out.max(output_towards(nb, dir));
                         }
                     }
                     if *output != new_out {
@@ -263,11 +340,10 @@ pub fn simulate(request: SimRequest) -> SimResponse {
                 }
                 BlockKind::Dust { power } => {
                     let mut new_power = 0;
-                    for dir in Direction::all() {
-                        let (dx, dy, dz) = dir.offset();
-                        let n = Pos { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz };
+                    for n in block.input_positions(*pos) {
                         if let Some(nb) = snapshot.get(&n) {
-                            let pw = output_towards(nb, dir.opposite());
+                            let dir = dir_from_to(n, *pos);
+                            let pw = output_towards(nb, dir);
                             let candidate = match nb {
                                 BlockKind::Dust { power: p, .. } => p.saturating_sub(1),
                                 _ => pw,
@@ -282,11 +358,10 @@ pub fn simulate(request: SimRequest) -> SimResponse {
                 }
                 BlockKind::Lamp { on } => {
                     let mut powered = false;
-                    for dir in Direction::all() {
-                        let (dx, dy, dz) = dir.offset();
-                        let n = Pos { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz };
+                    for n in block.input_positions(*pos) {
                         if let Some(nb) = snapshot.get(&n) {
-                            if output_towards(nb, dir.opposite()) > 0 {
+                            let dir = dir_from_to(n, *pos);
+                            if output_towards(nb, dir) > 0 {
                                 powered = true;
                                 break;
                             }
@@ -314,11 +389,10 @@ pub fn simulate(request: SimRequest) -> SimResponse {
                 }
                 BlockKind::Piston { extended, .. } => {
                     let mut powered = false;
-                    for dir in Direction::all() {
-                        let (dx, dy, dz) = dir.offset();
-                        let n = Pos { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz };
+                    for n in block.input_positions(*pos) {
                         if let Some(nb) = snapshot.get(&n) {
-                            if output_towards(nb, dir.opposite()) > 0 {
+                            let dir = dir_from_to(n, *pos);
+                            if output_towards(nb, dir) > 0 {
                                 powered = true;
                                 break;
                             }
@@ -331,11 +405,10 @@ pub fn simulate(request: SimRequest) -> SimResponse {
                 }
                 BlockKind::Hopper { enabled, .. } => {
                     let mut powered = false;
-                    for dir in Direction::all() {
-                        let (dx, dy, dz) = dir.offset();
-                        let n = Pos { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz };
+                    for n in block.input_positions(*pos) {
                         if let Some(nb) = snapshot.get(&n) {
-                            if output_towards(nb, dir.opposite()) > 0 {
+                            let dir = dir_from_to(n, *pos);
+                            if output_towards(nb, dir) > 0 {
                                 powered = true;
                                 break;
                             }
