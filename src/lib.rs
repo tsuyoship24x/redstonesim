@@ -298,7 +298,7 @@ pub fn simulate(request: SimRequest) -> SimResponse {
         for pos in dirty.iter() {
             if let Some(block) = world.get_mut(pos) {
                 match block {
-                    BlockKind::Button { ticks_remaining } => {
+                    BlockKind::Button { ticks_remaining, .. } => {
                         if *ticks_remaining > 0 {
                             let prev_output = 15;
                             *ticks_remaining -= 1;
@@ -461,7 +461,7 @@ pub fn simulate(request: SimRequest) -> SimResponse {
             diffs.push(TickDiff { tick, changes });
         } else if request.early_exit {
             let timers_active = world.values().any(|b| match b {
-                BlockKind::Button { ticks_remaining } if *ticks_remaining > 0 => true,
+                BlockKind::Button { ticks_remaining, .. } if *ticks_remaining > 0 => true,
                 BlockKind::Repeater { ticks_remaining, .. } if *ticks_remaining > 0 => true,
                 _ => false,
             });
