@@ -28,6 +28,52 @@ pub struct Pos {
     pub z: i32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Direction {
+    North,
+    East,
+    South,
+    West,
+    Up,
+    Down,
+}
+
+impl Direction {
+    fn offset(self) -> (i32, i32, i32) {
+        match self {
+            Direction::East => (1, 0, 0),
+            Direction::West => (-1, 0, 0),
+            Direction::Up => (0, 1, 0),
+            Direction::Down => (0, -1, 0),
+            Direction::South => (0, 0, 1),
+            Direction::North => (0, 0, -1),
+        }
+    }
+
+    fn opposite(self) -> Self {
+        match self {
+            Direction::East => Direction::West,
+            Direction::West => Direction::East,
+            Direction::Up => Direction::Down,
+            Direction::Down => Direction::Up,
+            Direction::South => Direction::North,
+            Direction::North => Direction::South,
+        }
+    }
+
+    fn all() -> [Direction; 6] {
+        [
+            Direction::East,
+            Direction::West,
+            Direction::Up,
+            Direction::Down,
+            Direction::South,
+            Direction::North,
+        ]
+    }
+}
+
 // -------------------------------------------------
 // Block kinds & internal state
 // -------------------------------------------------
@@ -36,9 +82,11 @@ pub struct Pos {
 pub enum BlockKind {
     Lever {
         on: bool,
+        facing: Direction,
     },
     Button {
         ticks_remaining: u8,
+        facing: Direction,
     }, // keeps signal while > 0
     Dust {
         power: u8,
@@ -50,18 +98,23 @@ pub enum BlockKind {
         delay: u8,           // configured delay (1‑4)
         ticks_remaining: u8, // countdown until output
         powered: bool,       // current output state
+        facing: Direction,
     },
     Comparator {
         output: u8, // current output power
+        facing: Direction,
     },
     Torch {
         lit: bool,
+        facing: Direction,
     },
     Piston {
         extended: bool,
+        facing: Direction,
     },
     Hopper {
         enabled: bool,
+        facing: Direction,
     },
 }
 
@@ -137,51 +190,25 @@ pub fn simulate(request: SimRequest) -> SimResponse {
     let mut world = request.world.into_map();
     let mut diffs: Vec<TickDiff> = Vec::new();
 
-    // Pre‑compute 6‑direction offsets (Manhattan adjacency)
-    const DIRS: [(i32, i32, i32); 6] = [
-        (1, 0, 0),
-        (-1, 0, 0),
-        (0, 1, 0),
-        (0, -1, 0),
-        (0, 0, 1),
-        (0, 0, -1),
-    ];
+    // helper to query output from a block toward a direction
+    fn output_towards(block: &BlockKind, dir: Direction) -> u8 {
+        match block {
+            BlockKind::Lever { on: true, facing } if *facing == dir => 15,
+            BlockKind::Button { ticks_remaining, facing }
+                if *ticks_remaining > 0 && *facing == dir => 15,
+            BlockKind::Repeater { powered: true, facing, .. } if *facing == dir => 15,
+            BlockKind::Comparator { output, facing } if *output > 0 && *facing == dir => *output,
+            BlockKind::Torch { lit: true, facing } if dir != *facing => 15,
+            BlockKind::Dust { power } => *power,
+            _ => 0,
+        }
+    }
 
     for tick in 1..=request.ticks {
         let mut changes: Vec<BlockChange> = Vec::new();
 
-        // gather current outputs (power level per position)
-        let gather_outputs = |world: &HashMap<Pos, BlockKind>| -> HashMap<Pos, u8> {
-            let mut m = HashMap::new();
-            for (p, b) in world {
-                match b {
-                    BlockKind::Lever { on: true } => {
-                        m.insert(*p, 15);
-                    }
-                    BlockKind::Button { ticks_remaining } if *ticks_remaining > 0 => {
-                        m.insert(*p, 15);
-                    }
-                    BlockKind::Repeater { powered: true, .. } => {
-                        m.insert(*p, 15);
-                    }
-                    BlockKind::Comparator { output } if *output > 0 => {
-                        m.insert(*p, *output);
-                    }
-                    BlockKind::Torch { lit: true } => {
-                        m.insert(*p, 15);
-                    }
-                    BlockKind::Dust { power } if *power > 0 => {
-                        m.insert(*p, *power);
-                    }
-                    _ => {}
-                }
-            }
-            m
-        };
-
         // take a snapshot of the world so we can query neighbor states
         let snapshot = world.clone();
-        let outputs = gather_outputs(&snapshot);
 
         // update blocks based on neighbor power
         for (pos, block) in world.iter_mut() {
@@ -192,16 +219,14 @@ pub fn simulate(request: SimRequest) -> SimResponse {
                         changes.push(BlockChange { pos: *pos, kind: block.clone() });
                     }
                 }
-                BlockKind::Repeater { delay, ticks_remaining, powered } => {
-                    // input power from neighbors
+                BlockKind::Repeater { delay, ticks_remaining, powered, facing } => {
+                    // input power from the back only
+                    let back = facing.opposite();
+                    let (dx, dy, dz) = back.offset();
+                    let n = Pos { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz };
                     let mut input = 0;
-                    for (dx, dy, dz) in DIRS {
-                        let n = Pos { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz };
-                        if let Some(pw) = outputs.get(&n) {
-                            if n != *pos {
-                                input = input.max(*pw);
-                            }
-                        }
+                    if let Some(nb) = snapshot.get(&n) {
+                        input = output_towards(nb, *facing);
                     }
 
                     if input > 0 {
@@ -222,12 +247,13 @@ pub fn simulate(request: SimRequest) -> SimResponse {
 
                     changes.push(BlockChange { pos: *pos, kind: block.clone() });
                 }
-                BlockKind::Comparator { output } => {
+                BlockKind::Comparator { output, facing } => {
                     let mut new_out = 0;
-                    for (dx, dy, dz) in DIRS {
+                    for dir in Direction::all() {
+                        let (dx, dy, dz) = dir.offset();
                         let n = Pos { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz };
-                        if let Some(pw) = outputs.get(&n) {
-                            new_out = new_out.max(*pw);
+                        if let Some(nb) = snapshot.get(&n) {
+                            new_out = new_out.max(output_towards(nb, dir.opposite()));
                         }
                     }
                     if *output != new_out {
@@ -237,12 +263,14 @@ pub fn simulate(request: SimRequest) -> SimResponse {
                 }
                 BlockKind::Dust { power } => {
                     let mut new_power = 0;
-                    for (dx, dy, dz) in DIRS {
+                    for dir in Direction::all() {
+                        let (dx, dy, dz) = dir.offset();
                         let n = Pos { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz };
-                        if let Some(pw) = outputs.get(&n) {
-                            let candidate = match snapshot.get(&n) {
-                                Some(BlockKind::Dust { power: p }) => p.saturating_sub(1),
-                                _ => *pw,
+                        if let Some(nb) = snapshot.get(&n) {
+                            let pw = output_towards(nb, dir.opposite());
+                            let candidate = match nb {
+                                BlockKind::Dust { power: p, .. } => p.saturating_sub(1),
+                                _ => pw,
                             };
                             new_power = new_power.max(candidate);
                         }
@@ -254,10 +282,11 @@ pub fn simulate(request: SimRequest) -> SimResponse {
                 }
                 BlockKind::Lamp { on } => {
                     let mut powered = false;
-                    for (dx, dy, dz) in DIRS {
+                    for dir in Direction::all() {
+                        let (dx, dy, dz) = dir.offset();
                         let n = Pos { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz };
-                        if let Some(pw) = outputs.get(&n) {
-                            if *pw > 0 {
+                        if let Some(nb) = snapshot.get(&n) {
+                            if output_towards(nb, dir.opposite()) > 0 {
                                 powered = true;
                                 break;
                             }
@@ -268,15 +297,13 @@ pub fn simulate(request: SimRequest) -> SimResponse {
                         changes.push(BlockChange { pos: *pos, kind: block.clone() });
                     }
                 }
-                BlockKind::Torch { lit } => {
+                BlockKind::Torch { lit, facing } => {
                     let mut powered = false;
-                    for (dx, dy, dz) in DIRS {
-                        let n = Pos { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz };
-                        if let Some(pw) = outputs.get(&n) {
-                            if *pw > 0 {
-                                powered = true;
-                                break;
-                            }
+                    let (dx, dy, dz) = facing.offset();
+                    let n = Pos { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz };
+                    if let Some(nb) = snapshot.get(&n) {
+                        if output_towards(nb, facing.opposite()) > 0 {
+                            powered = true;
                         }
                     }
                     let new_lit = !powered;
@@ -285,12 +312,13 @@ pub fn simulate(request: SimRequest) -> SimResponse {
                         changes.push(BlockChange { pos: *pos, kind: block.clone() });
                     }
                 }
-                BlockKind::Piston { extended } => {
+                BlockKind::Piston { extended, .. } => {
                     let mut powered = false;
-                    for (dx, dy, dz) in DIRS {
+                    for dir in Direction::all() {
+                        let (dx, dy, dz) = dir.offset();
                         let n = Pos { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz };
-                        if let Some(pw) = outputs.get(&n) {
-                            if *pw > 0 {
+                        if let Some(nb) = snapshot.get(&n) {
+                            if output_towards(nb, dir.opposite()) > 0 {
                                 powered = true;
                                 break;
                             }
@@ -301,12 +329,13 @@ pub fn simulate(request: SimRequest) -> SimResponse {
                         changes.push(BlockChange { pos: *pos, kind: block.clone() });
                     }
                 }
-                BlockKind::Hopper { enabled } => {
+                BlockKind::Hopper { enabled, .. } => {
                     let mut powered = false;
-                    for (dx, dy, dz) in DIRS {
+                    for dir in Direction::all() {
+                        let (dx, dy, dz) = dir.offset();
                         let n = Pos { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz };
-                        if let Some(pw) = outputs.get(&n) {
-                            if *pw > 0 {
+                        if let Some(nb) = snapshot.get(&n) {
+                            if output_towards(nb, dir.opposite()) > 0 {
                                 powered = true;
                                 break;
                             }
@@ -362,7 +391,7 @@ mod tests {
             blocks: vec![
                 PlacedBlock {
                     pos: Pos { x: 0, y: 0, z: 0 },
-                    kind: BlockKind::Lever { on: true },
+                    kind: BlockKind::Lever { on: true, facing: Direction::East },
                 },
                 PlacedBlock {
                     pos: Pos { x: 1, y: 0, z: 0 },
@@ -394,7 +423,7 @@ mod tests {
             blocks: vec![
                 PlacedBlock {
                     pos: Pos { x: 0, y: 0, z: 0 },
-                    kind: BlockKind::Lever { on: true },
+                    kind: BlockKind::Lever { on: true, facing: Direction::East },
                 },
                 PlacedBlock {
                     pos: Pos { x: 1, y: 0, z: 0 },
@@ -417,17 +446,49 @@ mod tests {
             blocks: vec![
                 PlacedBlock {
                     pos: Pos { x: 0, y: 0, z: 0 },
-                    kind: BlockKind::Lever { on: true },
+                    kind: BlockKind::Lever { on: true, facing: Direction::East },
                 },
                 PlacedBlock {
                     pos: Pos { x: 1, y: 0, z: 0 },
-                    kind: BlockKind::Torch { lit: true },
+                    kind: BlockKind::Torch { lit: true, facing: Direction::West },
                 },
             ],
         };
         let req = SimRequest { ticks: 2, world, early_exit: true };
         let res = simulate(req);
         assert!(res.diffs.iter().any(|d| d.changes.iter().any(|c| matches!(c.kind, BlockKind::Torch { lit: false }))));
+    }
+
+    #[test]
+    fn repeater_requires_back_input() {
+        let world = World {
+            blocks: vec![
+                PlacedBlock {
+                    pos: Pos { x: 1, y: 0, z: 1 },
+                    kind: BlockKind::Lever { on: true, facing: Direction::North },
+                },
+                PlacedBlock {
+                    pos: Pos { x: 1, y: 0, z: 0 },
+                    kind: BlockKind::Repeater {
+                        delay: 1,
+                        ticks_remaining: 0,
+                        powered: false,
+                        facing: Direction::East,
+                    },
+                },
+                PlacedBlock {
+                    pos: Pos { x: 2, y: 0, z: 0 },
+                    kind: BlockKind::Dust { power: 0 },
+                },
+                PlacedBlock {
+                    pos: Pos { x: 3, y: 0, z: 0 },
+                    kind: BlockKind::Lamp { on: false },
+                },
+            ],
+        };
+        let req = SimRequest { ticks: 3, world, early_exit: true };
+        let res = simulate(req);
+        assert!(!res.diffs.iter().any(|d| d.changes.iter().any(|c| matches!(c.kind, BlockKind::Lamp { on: true }))));
     }
 }
 

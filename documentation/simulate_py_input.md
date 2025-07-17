@@ -27,17 +27,18 @@
 
 | type       | フィールド例                              | 説明                                     |
 |------------|------------------------------------------|------------------------------------------|
-| `lever`    | `{ "on": true }`                        | レバーの初期状態。                        |
-| `button`   | `{ "ticks_remaining": 0 }`              | ボタンが押されている残り tick 数。        |
+| `lever`    | `{ "on": true, "facing": "east" }`      | レバーの初期状態と向き。                   |
+| `button`   | `{ "ticks_remaining": 0, "facing": "east" }` | ボタンが押されている残り tick 数と向き。        |
 | `dust`     | `{ "power": 0 }`                        | レッドストーンダストの出力レベル (0–15)。 |
 | `lamp`     | `{ "on": false }`                       | ランプの点灯状態。                        |
-| `repeater` | `{ "delay": 1, "ticks_remaining": 0, "powered": false }` | リピータの遅延と現在状態。 |
-| `comparator` | `{ "output": 0 }`                    | 比較器の出力レベル (0–15)。               |
-| `torch`    | `{ "lit": true }`                       | レッドストーントーチが点灯しているか。    |
-| `piston`   | `{ "extended": false }`                 | ピストンが伸びているかどうか。            |
-| `hopper`   | `{ "enabled": true }`                   | ホッパーが動作しているかどうか。          |
+| `repeater` | `{ "delay": 1, "ticks_remaining": 0, "powered": false, "facing": "east" }` | リピータの遅延・向きと現在状態。 |
+| `comparator` | `{ "output": 0, "facing": "east" }` | 比較器の出力レベル (0–15) と向き。               |
+| `torch`    | `{ "lit": true, "facing": "west" }`    | レッドストーントーチが点灯しているかと取り付け面。    |
+| `piston`   | `{ "extended": false, "facing": "up" }` | ピストンが伸びているかどうかと向き。            |
+| `hopper`   | `{ "enabled": true, "facing": "down" }` | ホッパーが動作しているかどうかと向き。          |
 
 座標やフィールドの値は整数 (i32) または真偽値です。
+`facing` には `north`, `east`, `south`, `west`, `up`, `down` のいずれかを指定します。
 
 ## 例
 上記の JSON を `simulate_py` に渡すと、レバーをオンにした状態から始まり、隣接するダストを介してランプが点灯するかを確認できます。
