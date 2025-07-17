@@ -38,7 +38,8 @@
 | `hopper`   | `{ "enabled": true, "facing": "down" }` | ホッパーが動作しているかどうかと向き。          |
 
 座標やフィールドの値は整数 (i32) または真偽値です。
-`facing` には `north`, `east`, `south`, `west`, `up`, `down` のいずれかを指定します。
+`facing` フィールドは小文字で `north`, `east`, `south`, `west`, `up`, `down` のいずれかを指定します。
+`lever` など向きを持つブロックではこの `facing` が必須となりました。
 
 ## 例
 上記の JSON を `simulate_py` に渡すと、レバーをオンにした状態から始まり、隣接するダストを介してランプが点灯するかを確認できます。
