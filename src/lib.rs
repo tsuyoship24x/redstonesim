@@ -297,15 +297,17 @@ pub fn simulate(request: SimRequest) -> SimResponse {
 
         for pos in dirty.iter() {
             if let Some(block) = world.get_mut(pos) {
+                let mut changed = false;
+                let mut mark_out = false;
                 match block {
                     BlockKind::Button { ticks_remaining, .. } => {
                         if *ticks_remaining > 0 {
                             let prev_output = 15;
                             *ticks_remaining -= 1;
                             let new_output = if *ticks_remaining > 0 { 15 } else { 0 };
-                            changes.push(BlockChange { pos: *pos, kind: block.clone() });
+                            changed = true;
                             if prev_output != new_output {
-                                mark_outputs(block, *pos, &mut next_dirty);
+                                mark_out = true;
                             }
                             if *ticks_remaining > 0 {
                                 next_dirty.insert(*pos);
@@ -342,11 +344,11 @@ pub fn simulate(request: SimRequest) -> SimResponse {
                         let new_output = if *powered { 15 } else { 0 };
 
                         if prev_output != new_output || *ticks_remaining != 0 {
-                            changes.push(BlockChange { pos: *pos, kind: block.clone() });
+                            changed = true;
                         }
 
                         if prev_output != new_output {
-                            mark_outputs(block, *pos, &mut next_dirty);
+                            mark_out = true;
                         }
 
                         if *ticks_remaining > 0 {
@@ -363,8 +365,8 @@ pub fn simulate(request: SimRequest) -> SimResponse {
                         }
                         if *output != new_out {
                             *output = new_out;
-                            changes.push(BlockChange { pos: *pos, kind: block.clone() });
-                            mark_outputs(block, *pos, &mut next_dirty);
+                            changed = true;
+                            mark_out = true;
                         }
                     }
                     BlockKind::Dust { power } => {
@@ -382,8 +384,8 @@ pub fn simulate(request: SimRequest) -> SimResponse {
                         }
                         if *power != new_power {
                             *power = new_power;
-                            changes.push(BlockChange { pos: *pos, kind: block.clone() });
-                            mark_outputs(block, *pos, &mut next_dirty);
+                            changed = true;
+                            mark_out = true;
                         }
                     }
                     BlockKind::Lamp { on } => {
@@ -399,7 +401,7 @@ pub fn simulate(request: SimRequest) -> SimResponse {
                         }
                         if *on != powered {
                             *on = powered;
-                            changes.push(BlockChange { pos: *pos, kind: block.clone() });
+                            changed = true;
                         }
                     }
                     BlockKind::Torch { lit, facing } => {
@@ -414,8 +416,8 @@ pub fn simulate(request: SimRequest) -> SimResponse {
                         let new_lit = !powered;
                         if *lit != new_lit {
                             *lit = new_lit;
-                            changes.push(BlockChange { pos: *pos, kind: block.clone() });
-                            mark_outputs(block, *pos, &mut next_dirty);
+                            changed = true;
+                            mark_out = true;
                         }
                     }
                     BlockKind::Piston { extended, .. } => {
@@ -431,8 +433,8 @@ pub fn simulate(request: SimRequest) -> SimResponse {
                         }
                         if *extended != powered {
                             *extended = powered;
-                            changes.push(BlockChange { pos: *pos, kind: block.clone() });
-                            mark_outputs(block, *pos, &mut next_dirty);
+                            changed = true;
+                            mark_out = true;
                         }
                     }
                     BlockKind::Hopper { enabled, .. } => {
@@ -449,10 +451,17 @@ pub fn simulate(request: SimRequest) -> SimResponse {
                         let new_enabled = !powered;
                         if *enabled != new_enabled {
                             *enabled = new_enabled;
-                            changes.push(BlockChange { pos: *pos, kind: block.clone() });
+                            changed = true;
                         }
                     }
                     _ => {}
+                }
+
+                if changed {
+                    changes.push(BlockChange { pos: *pos, kind: block.clone() });
+                }
+                if mark_out {
+                    mark_outputs(block, *pos, &mut next_dirty);
                 }
             }
         }
